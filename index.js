@@ -11,7 +11,7 @@ if (missingEnvVars.length > 0) {
 
 const trimTrailingSlash = value => value.replace(/\/+$/, '');
 
-const INTERNAL_API_URL = trimTrailingSlash(process.env.INTERNAL_API_URL || 'http://mtphotos:8063/api');
+const INTERNAL_API_URL = trimTrailingSlash(process.env.INTERNAL_API_URL || 'http://mtphotos:8063');
 const PUBLIC_API_URL = trimTrailingSlash(process.env.PUBLIC_API_URL);
 const API_KEY = process.env.API_KEY;
 const CLIENT_TOKEN = process.env.CLIENT_TOKEN;
