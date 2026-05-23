@@ -21,6 +21,10 @@ function imageUrl(baseUrl, type, id, md5, authCode) {
   return `${baseUrl}/gateway/${type}/${encodeURIComponent(md5)}?id=${encodeURIComponent(id)}&auth_code=${encodeURIComponent(authCode)}`;
 }
 
+function webUrl(baseUrl, id) {
+  return `${baseUrl}/photoDetail?id=${encodeURIComponent(id)}`;
+}
+
 async function isUsableImageUrl(url) {
   try {
     const response = await fetch(url, { method: 'HEAD' });
@@ -30,56 +34,86 @@ async function isUsableImageUrl(url) {
   }
 }
 
-app.get('/random.jpg', async (req, res) => {
-  const { token } = req.query;
+function assertClientToken(req, res) {
+  if (req.query.token === CLIENT_TOKEN) return true;
 
-  if (token !== CLIENT_TOKEN) {
-    return res.status(401).json({ error: 'Invalid Token' });
+  res.status(401).json({ error: 'Invalid Token' });
+  return false;
+}
+
+async function getRandomPhoto() {
+  const authPromise = fetch(`${INTERNAL_API_URL}/auth/auth_code`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ api_key: API_KEY })
+  }).then(r => r.json());
+
+  const listPromise = fetch(`${INTERNAL_API_URL}/gateway/filesInTimelineV2`, {
+    method: 'GET',
+    headers: { 'x-api-key': API_KEY }
+  }).then(r => r.json());
+
+  const [authData, listData] = await Promise.all([authPromise, listPromise]);
+
+  const authCode = authData?.auth_code;
+  if (!authCode) {
+    const error = new Error('Failed to obtain auth_code from upstream');
+    error.statusCode = 500;
+    throw error;
   }
 
+  if (!listData || !Array.isArray(listData.result)) {
+    const error = new Error('Invalid timeline data format received');
+    error.statusCode = 500;
+    throw error;
+  }
+
+  const photoList = listData.result
+    .flatMap(dayItem => dayItem.list || [])
+    .filter(item => item?.id && item?.MD5);
+
+  if (photoList.length === 0) {
+    const error = new Error('No valid photos found in timeline');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const randomIndex = Math.floor(Math.random() * photoList.length);
+  const { id, MD5 } = photoList[randomIndex];
+
+  const internalProxyUrl = imageUrl(INTERNAL_API_URL, 'proxy', id, MD5, authCode);
+  const imageType = await isUsableImageUrl(internalProxyUrl) ? 'proxy' : 's260';
+
+  return {
+    id,
+    md5: MD5,
+    imageType,
+    imageUrl: imageUrl(PUBLIC_API_URL, imageType, id, MD5, authCode),
+    webUrl: webUrl(PUBLIC_API_URL, id)
+  };
+}
+
+app.get('/random.jpg', async (req, res) => {
+  if (!assertClientToken(req, res)) return;
+
   try {
-    const authPromise = fetch(`${INTERNAL_API_URL}/auth/auth_code`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ api_key: API_KEY })
-    }).then(r => r.json());
-
-    const listPromise = fetch(`${INTERNAL_API_URL}/gateway/filesInTimelineV2`, {
-      method: 'GET',
-      headers: { 'x-api-key': API_KEY }
-    }).then(r => r.json());
-
-    const [authData, listData] = await Promise.all([authPromise, listPromise]);
-
-    const auth_code = authData?.auth_code;
-    if (!auth_code) {
-      return res.status(500).json({ error: 'Failed to obtain auth_code from upstream' });
-    }
-
-    if (!listData || !Array.isArray(listData.result)) {
-      return res.status(500).json({ error: 'Invalid timeline data format received' });
-    }
-
-    const photoList = listData.result
-      .flatMap(dayItem => dayItem.list || [])
-      .filter(item => item?.id && item?.MD5);
-
-    if (photoList.length === 0) {
-      return res.status(404).json({ error: 'No valid photos found in timeline' });
-    }
-
-    const randomIndex = Math.floor(Math.random() * photoList.length);
-    const { id, MD5 } = photoList[randomIndex];
-
-    const internalProxyUrl = imageUrl(INTERNAL_API_URL, 'proxy', id, MD5, auth_code);
-    const publicType = await isUsableImageUrl(internalProxyUrl) ? 'proxy' : 's260';
-    const targetUrl = imageUrl(PUBLIC_API_URL, publicType, id, MD5, auth_code);
-
-    return res.redirect(302, targetUrl);
-
+    const photo = await getRandomPhoto();
+    return res.redirect(302, photo.imageUrl);
   } catch (error) {
     console.error('Error processing request:', error);
-    return res.status(500).json({ error: 'Internal Server Error' });
+    return res.status(error.statusCode || 500).json({ error: error.message || 'Internal Server Error' });
+  }
+});
+
+app.get('/random.json', async (req, res) => {
+  if (!assertClientToken(req, res)) return;
+
+  try {
+    const photo = await getRandomPhoto();
+    return res.json(photo);
+  } catch (error) {
+    console.error('Error processing request:', error);
+    return res.status(error.statusCode || 500).json({ error: error.message || 'Internal Server Error' });
   }
 });
 
