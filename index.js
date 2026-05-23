@@ -17,6 +17,19 @@ const API_KEY = process.env.API_KEY;
 const CLIENT_TOKEN = process.env.CLIENT_TOKEN;
 const PORT = process.env.PORT || 8064;
 
+function imageUrl(baseUrl, type, id, md5, authCode) {
+  return `${baseUrl}/gateway/${type}/${encodeURIComponent(md5)}?id=${encodeURIComponent(id)}&auth_code=${encodeURIComponent(authCode)}`;
+}
+
+async function isUsableImageUrl(url) {
+  try {
+    const response = await fetch(url, { method: 'HEAD' });
+    return response.ok && (response.headers.get('content-type') || '').startsWith('image/');
+  } catch {
+    return false;
+  }
+}
+
 app.get('/random.jpg', async (req, res) => {
   const { token } = req.query;
 
@@ -58,8 +71,9 @@ app.get('/random.jpg', async (req, res) => {
     const randomIndex = Math.floor(Math.random() * photoList.length);
     const { id, MD5 } = photoList[randomIndex];
 
-    const urlencoded_auth_code = encodeURIComponent(auth_code);
-    const targetUrl = `${PUBLIC_API_URL}/gateway/proxy/${encodeURIComponent(MD5)}?id=${encodeURIComponent(id)}&auth_code=${urlencoded_auth_code}`;
+    const internalProxyUrl = imageUrl(INTERNAL_API_URL, 'proxy', id, MD5, auth_code);
+    const publicType = await isUsableImageUrl(internalProxyUrl) ? 'proxy' : 's260';
+    const targetUrl = imageUrl(PUBLIC_API_URL, publicType, id, MD5, auth_code);
 
     return res.redirect(302, targetUrl);
 
